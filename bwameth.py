@@ -103,7 +103,7 @@ def fasta_iter(fasta_name):
         header = next(header)[1:].strip()
         yield header, "".join(s.strip() for s in next(faiter)).upper()
 
-def convert_reads(fq1s, fq2s, out=sys.stdout):
+def convert_reads(fq1s, fq2s, pbat=True, out=sys.stdout):
 
     for fq1, fq2 in zip(fq1s.split(","), fq2s.split(",")):
         sys.stderr.write("converting reads in %s,%s\n" % (fq1, fq2))
@@ -141,7 +141,7 @@ def convert_reads(fq1s, fq2s, out=sys.stdout):
 
         for read_i, (name, seq, _, qual) in enumerate(selected_iter):
             if name is None: continue
-            convert_and_write_read(name,seq,qual,read_i%2,out)
+            convert_and_write_read(name,seq,qual,read_i%2,out,pbat)
             if len(seq) < 80:
                 lt80 += 1
 
@@ -151,7 +151,7 @@ def convert_reads(fq1s, fq2s, out=sys.stdout):
         sys.stderr.write("       : this program is designed for long reads\n")
     return 0
 
-def convert_and_write_read(name,seq,qual,read_i,out):
+def convert_and_write_read(name,seq,qual,read_i,out,pbat):
 
     name = name.rstrip("\r\n").split(" ")[0]
     if name[0] != "@":
@@ -167,8 +167,10 @@ def convert_and_write_read(name,seq,qual,read_i,out):
 
     seq = seq.upper().rstrip('\n')
 
-
-    char_a, char_b = ['CT', 'GA'][read_i]
+    if pbat:
+        char_a, char_b = ['GA', 'CT'][read_i]
+    else:
+        char_a, char_b = ['CT', 'GA'][read_i]
     # keep original sequence as name.
     name = " ".join((name,
                      "YS:Z:" + seq +
@@ -332,7 +334,7 @@ def rname(fq1, fq2=""):
 
 
 def bwa_mem(fa, fq_convert_cmd, extra_args, threads=1, rg=None,
-            paired=True, set_as_failed=None, do_not_penalize_chimeras=False):
+            paired=True, set_as_failed=None, do_not_penalize_chimeras=False, bwaoptions=None):
     conv_fa = convert_fasta(fa, just_name=True)
 
     if is_newer_b(conv_fa, (conv_fa + '.amb', conv_fa + '.sa')):
@@ -355,11 +357,25 @@ def bwa_mem(fa, fq_convert_cmd, extra_args, threads=1, rg=None,
     #starts the pipeline with the program to convert fastqs
     cmd = ("|%s " % fq_convert_cmd)
 
+    option_dict = {'T': 30, 'B': 2, 'L': 5}
+    other_options = 'CM'
+    
+    if "S" in bwaoptions or "P" in bwaoptions:
+        paired=False
+    for option in bwaoptions.split(","):
+        tuples = option.split("=")
+        if len(tuples) == 2:
+            option_dict[tuples[0]] = tuples[1]
+        elif len(tuples) == 1:
+            for single in tuples[0]:
+                if single not in other_options:
+                    other_options += single
+
     # penalize clipping and unpaired. lower penalty on mismatches (-B)
     if idx == "mem2":
-        cmd += "|bwa-mem2 mem -T 40 -B 2 -L 10 -CM "
+        cmd += f"|bwa-mem2 mem -T {option_dict['T']} -B {option_dict['B']} -L {option_dict['L']} -{other_options} "
     else:
-        cmd += "|bwa mem -T 40 -B 2 -L 10 -CM "
+        cmd += f"|bwa mem -T {option_dict['T']} -B {option_dict['B']} -L {option_dict['L']} -{other_options} "
 
     if paired:
         cmd += ("-U 100 -p ")
@@ -499,11 +515,16 @@ write.table(df, row.names=FALSE, quote=FALSE, sep="\t")
             print("\t".join(d))
 
 
-def convert_fqs(fqs):
+def convert_fqs(fqs, pbat=True):
     script = __file__
-    return "%s %s c2t %s %s" % (sys.executable, script, fqs[0],
-               fqs[1] if len(fqs) > 1
-                      else ','.join(['NA'] * len(fqs[0].split(","))))
+    if pbat:
+        return "%s %s c2t %s %s %s" % (sys.executable, script, fqs[0],
+                fqs[1], pbat if len(fqs) > 1
+                    else ','.join(['NA'] * len(fqs[0].split(","))))
+    else:
+        return "%s %s c2t %s %s" % (sys.executable, script, fqs[0],
+                   fqs[1] if len(fqs) > 1
+                          else ','.join(['NA'] * len(fqs[0].split(","))))
 
 def main(args=sys.argv[1:]):
 
@@ -516,7 +537,7 @@ def main(args=sys.argv[1:]):
         sys.exit(bwa_index(convert_fasta(args[1]), ver = "mem2"))
 
     if len(args) > 0 and args[0] == "c2t":
-        sys.exit(convert_reads(args[1], args[2]))
+        sys.exit(convert_reads(args[1], args[2], args[3]))
 
     if len(args) > 0 and args[0] == "cnvs":
         sys.exit(cnvs_main(args[1:]))
@@ -524,6 +545,7 @@ def main(args=sys.argv[1:]):
     p = argparse.ArgumentParser(__doc__)
     p.add_argument("--reference", help="reference fasta", required=True)
     p.add_argument("-t", "--threads", type=int, default=6)
+    p.add_argument("-pbat", action='store_true', help='whether use PBAT')
     p.add_argument("--read-group", help="read-group to add to bam in same"
             " format as to bwa: '@RG\\tID:foo\\tSM:bar'")
     p.add_argument('--set-as-failed', help="flag alignments to this strand"
@@ -533,6 +555,7 @@ def main(args=sys.argv[1:]):
             " reads to align to the original-bottom (OB) strand and will flag"
             " as failed those aligning to the forward, or original top (OT).",
         default=None, choices=('f', 'r'))
+    p.add_argument('--bwa_options', type=str, help='Options to use for bwa in the format:"B=2,L=10,5SPM"')
     p.add_argument('-p', '--interleaved', action='store_true', help='fastq files have 4 lines of read1 followed by 4 lines of read2 (e.g. seqtk mergepe output)')
     p.add_argument('--version', action='version', version='bwa-meth.py {}'.format(__version__))
 
@@ -549,14 +572,14 @@ def main(args=sys.argv[1:]):
     args, pass_through_args = p.parse_known_args(args)
 
     # for the 2nd file. use G => A and bwa's support for streaming.
-    conv_fqs_cmd = convert_fqs(args.fastqs)
+    conv_fqs_cmd = convert_fqs(args.fastqs, args.pbat)
 
     bwa_mem(args.reference, conv_fqs_cmd, ' '.join(map(str, pass_through_args)),
             threads=args.threads,
             rg=args.read_group or rname(*args.fastqs),
             paired=(len(args.fastqs) == 2 or args.interleaved),
             set_as_failed=args.set_as_failed,
-            do_not_penalize_chimeras=args.do_not_penalize_chimeras)
+            do_not_penalize_chimeras=args.do_not_penalize_chimeras, bwaoptions=args.bwa_options)
     
 
 if __name__ == "__main__":
