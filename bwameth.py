@@ -537,7 +537,7 @@ def main(args=sys.argv[1:]):
         sys.exit(bwa_index(convert_fasta(args[1]), ver = "mem2"))
 
     if len(args) > 0 and args[0] == "c2t":
-        sys.exit(convert_reads(args[1], args[2], args[3]))
+        sys.exit(convert_reads(args[1], args[2]))
 
     if len(args) > 0 and args[0] == "cnvs":
         sys.exit(cnvs_main(args[1:]))
