@@ -378,7 +378,7 @@ def bwa_mem(fa, fq_convert_cmd, extra_args, threads=1, rg=None,
         cmd += f"|bwa mem -T {option_dict['T']} -B {option_dict['B']} -L {option_dict['L']} -{other_options} "
 
     if paired:
-        cmd += ("-U 100 -p ")
+        cmd += ("-U 17 -p ")
     cmd += "-R '{rg}' -t {threads} {extra_args} {conv_fa} /dev/stdin"
     cmd = cmd.format(**locals())
     sys.stderr.write("running: %s\n" % cmd.lstrip("|"))
